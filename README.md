@@ -9,7 +9,7 @@
 
 ### Deployment Steps
 
-1. **Edit terraform.tfvars**
+1. **Edit variables.tf**
    - Change `content_bucket_name` to a globally unique name
    
 2. **Initialize Terraform**
