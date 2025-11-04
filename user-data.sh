@@ -7,34 +7,36 @@ echo "=== Starting EC2 initialization ==="
 
 # ---- System Prep ----
 yum update -y
-yum install -y git python3 python3-pip awscli jq
+yum install -y git jq awscli gcc openssl-devel bzip2-devel libffi-devel make
 
-# ---- Install Node.js for existing web app ----
+# ---- Install Python 3.11 ----
+dnf install -y python3.11 python3.11-devel
+alternatives --set python3 /usr/bin/python3.11
+python3 --version
+
+# ---- Install Poetry 1.3.2 ----
+curl -sSL https://install.python-poetry.org | python3 -
+export PATH="/root/.local/bin:$PATH"
+poetry --version
+
+# ---- Install Node.js (for simple web demo) ----
 curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 yum install -y nodejs
 
-# ---- Setup Web App ----
+# ---- Create and start simple Node.js web app ----
 mkdir -p /opt/webapp
 cd /opt/webapp
-
-# Create Node.js app (placeholder; replace with your original app content)
 cat > server.js <<'EOFSERVER'
 const http = require('http');
 const PORT = 80;
-const server = http.createServer((req, res) => {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('EC2 Web App is running.\n');
-});
-server.listen(PORT, () => console.log('Server running on port ' + PORT));
+http.createServer((req,res)=>{
+  res.writeHead(200, {'Content-Type':'text/plain'});
+  res.end('EC2 + Temporal Cloud Demo running\n');
+}).listen(PORT,()=>console.log('Server running on '+PORT));
 EOFSERVER
 
 cat > package.json <<'EOFPACKAGE'
-{
-  "name": "ec2-s3-webapp",
-  "version": "1.0.0",
-  "main": "server.js",
-  "scripts": {"start": "node server.js"}
-}
+{"name":"ec2-s3-webapp","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js"}}
 EOFPACKAGE
 
 npm install
@@ -60,20 +62,15 @@ systemctl daemon-reload
 systemctl enable webapp
 systemctl start webapp
 
-# ---- Setup Temporal Python Worker ----
+# ---- Setup Temporal Order Management Worker ----
 echo "=== Setting up Temporal Order Management Worker ==="
 
 mkdir -p /opt/temporal-order-worker/certs
 cd /opt/temporal-order-worker
 
-# Install Python dependencies
-pip3 install temporalio boto3
-
-# --- Pull Temporal Cloud credentials from AWS Secrets Manager ---
+# --- Fetch Temporal Cloud credentials from AWS Secrets Manager ---
 SECRET_NAME="temporal-cloud-credentials"
 AWS_REGION="$(curl -s http://169.254.169.254/latest/meta-data/placement/region)"
-
-echo "Fetching Temporal Cloud credentials from Secrets Manager: $SECRET_NAME"
 
 aws secretsmanager get-secret-value \
   --secret-id "$SECRET_NAME" \
@@ -81,20 +78,15 @@ aws secretsmanager get-secret-value \
   --query SecretString \
   --output text > secret.json
 
-# Extract values
 NAMESPACE=$(jq -r '.namespace' secret.json)
 ADDRESS=$(jq -r '.address' secret.json)
 CERT=$(jq -r '.cert' secret.json)
 KEY=$(jq -r '.key' secret.json)
 
-# Write certs to disk
 echo "$CERT" | base64 -d > /opt/temporal-order-worker/certs/client.pem
 echo "$KEY" | base64 -d > /opt/temporal-order-worker/certs/client.key
-
-# Cleanup
 rm -f secret.json
 
-# --- Create environment file ---
 cat > /opt/temporal-order-worker/worker.env <<EOF
 TEMPORAL_NAMESPACE=$NAMESPACE
 TEMPORAL_ADDRESS=$ADDRESS
@@ -102,36 +94,15 @@ TEMPORAL_MTLS_CERT_PATH=/opt/temporal-order-worker/certs/client.pem
 TEMPORAL_MTLS_KEY_PATH=/opt/temporal-order-worker/certs/client.key
 EOF
 
-# --- Create minimal worker.py example (replace with your demo’s code) ---
-cat > /opt/temporal-order-worker/worker.py <<'EOF'
-import asyncio, os
-from temporalio.client import Client
-from temporalio.worker import Worker
-from order_workflows import *  # replace with your demo imports
+# --- Clone the Temporal Order Management Demo ---
+git clone https://github.com/temporal-sa/temporal-order-management-demo.git repo || true
+cd repo/python   # Python SDK directory
 
-async def main():
-    client = await Client.connect(
-        os.getenv("TEMPORAL_ADDRESS"),
-        namespace=os.getenv("TEMPORAL_NAMESPACE"),
-        tls=Client.TLSConfig(
-            client_cert_path=os.getenv("TEMPORAL_MTLS_CERT_PATH"),
-            client_private_key_path=os.getenv("TEMPORAL_MTLS_KEY_PATH"),
-        ),
-    )
-    worker = Worker(
-        client,
-        task_queue="order-task-queue",
-        workflows=[OrderWorkflow],
-        activities=[charge_customer, update_inventory, send_confirmation],
-    )
-    print("Python Temporal worker started and connected to Temporal Cloud.")
-    await worker.run()
+# --- Install dependencies with Poetry ---
+poetry env use python3.11
+poetry install --no-root
 
-if __name__ == "__main__":
-    asyncio.run(main())
-EOF
-
-# --- Create systemd service for the Temporal worker ---
+# --- Create systemd service for the Temporal Python worker ---
 cat > /etc/systemd/system/temporal-worker.service <<EOF
 [Unit]
 Description=Temporal Order Management Python Worker
@@ -140,9 +111,9 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/temporal-order-worker
+WorkingDirectory=/opt/temporal-order-worker/repo/python
 EnvironmentFile=/opt/temporal-order-worker/worker.env
-ExecStart=/usr/bin/python3 /opt/temporal-order-worker/worker.py
+ExecStart=/root/.local/bin/poetry run python startcloudworker.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -157,4 +128,4 @@ systemctl enable temporal-worker
 systemctl start temporal-worker
 
 echo "=== Initialization complete! ==="
-echo "Node.js app on port 80 and Temporal worker connected to Temporal Cloud."
+echo "Node.js app running on port 80 and Temporal worker connected to Temporal Cloud."
