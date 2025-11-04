@@ -126,6 +126,34 @@ resource "aws_iam_role_policy" "ec2_s3_policy" {
   })
 }
 
+# --- Temporal Secrets Access Policy ---
+resource "aws_iam_policy" "temporal_secrets_policy" {
+  name        = "TemporalSecretsAccessPolicy"
+  description = "Allow EC2 to read Temporal Cloud credentials from Secrets Manager"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue"
+        ]
+        Resource = "arn:aws:secretsmanager:${var.aws_region}:${data.aws_caller_identity.current.account_id}:secret:temporal-cloud-credentials*"
+      }
+    ]
+  })
+}
+
+# Attach the Temporal Secrets policy to the EC2 role
+resource "aws_iam_role_policy_attachment" "temporal_secrets_attach" {
+  role       = aws_iam_role.ec2_s3_role.name
+  policy_arn = aws_iam_policy.temporal_secrets_policy.arn
+}
+
+# Data source for account ID (add only once per file)
+data "aws_caller_identity" "current" {}
+
 # IAM instance profile
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${var.app_name}-ec2-profile"

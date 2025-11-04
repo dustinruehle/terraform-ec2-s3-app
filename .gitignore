@@ -52,3 +52,5 @@ override.tf.json
 .terraformrc
 terraform.rc
 *.zip
+.idea/
+.DS_Store
