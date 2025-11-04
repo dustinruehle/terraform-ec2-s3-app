@@ -7,11 +7,11 @@ echo "=== Starting EC2 initialization ==="
 
 # ---- System Prep ----
 yum update -y
-yum install -y git jq awscli gcc openssl-devel bzip2-devel libffi-devel make
+yum install -y git jq awscli gcc openssl-devel bzip2-devel libffi-devel make unzip zip
 
-# ---- Install Python 3.11 ----
-dnf install -y python3.11 python3.11-devel
-alternatives --set python3 /usr/bin/python3.11
+# ---- Install Python 3.12 ----
+dnf install -y python3.12 python3.12-devel
+ln -sf /usr/bin/python3.12 /usr/local/bin/python3
 python3 --version
 
 # ---- Install Poetry 1.3.2 ----
@@ -19,11 +19,11 @@ curl -sSL https://install.python-poetry.org | python3 -
 export PATH="/root/.local/bin:$PATH"
 poetry --version
 
-# ---- Install Node.js (for simple web demo) ----
+# ---- Install Node.js (for demo web app) ----
 curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 yum install -y nodejs
 
-# ---- Create and start simple Node.js web app ----
+# ---- Simple Node.js web app ----
 mkdir -p /opt/webapp
 cd /opt/webapp
 cat > server.js <<'EOFSERVER'
@@ -87,22 +87,28 @@ echo "$CERT" | base64 -d > /opt/temporal-order-worker/certs/client.pem
 echo "$KEY" | base64 -d > /opt/temporal-order-worker/certs/client.key
 rm -f secret.json
 
+# --- Create environment variables file that matches setcloudenv.sh naming ---
 cat > /opt/temporal-order-worker/worker.env <<EOF
 TEMPORAL_NAMESPACE=$NAMESPACE
 TEMPORAL_ADDRESS=$ADDRESS
-TEMPORAL_MTLS_CERT_PATH=/opt/temporal-order-worker/certs/client.pem
-TEMPORAL_MTLS_KEY_PATH=/opt/temporal-order-worker/certs/client.key
+TEMPORAL_CERT_PATH=/opt/temporal-order-worker/certs/client.pem
+TEMPORAL_KEY_PATH=/opt/temporal-order-worker/certs/client.key
 EOF
 
 # --- Clone the Temporal Order Management Demo ---
 git clone https://github.com/temporal-sa/temporal-order-management-demo.git repo || true
-cd repo/python   # Python SDK directory
+cd repo/python
+
+# --- Copy and activate example setcloudenv.sh ---
+cp ../setcloudenv.example ../setcloudenv.sh
+chmod +x ../setcloudenv.sh
+chmod +x ./startcloudworker.sh
 
 # --- Install dependencies with Poetry ---
-poetry env use python3.11
+poetry env use /usr/bin/python3.12
 poetry install --no-root
 
-# --- Create systemd service for the Temporal Python worker ---
+# --- Create systemd service for Temporal Python worker ---
 cat > /etc/systemd/system/temporal-worker.service <<EOF
 [Unit]
 Description=Temporal Order Management Python Worker
@@ -113,7 +119,7 @@ Type=simple
 User=root
 WorkingDirectory=/opt/temporal-order-worker/repo/python
 EnvironmentFile=/opt/temporal-order-worker/worker.env
-ExecStart=/root/.local/bin/poetry run python startcloudworker.py
+ExecStart=/root/.local/bin/poetry run bash ./startcloudworker.sh
 Restart=always
 RestartSec=5
 StandardOutput=journal
