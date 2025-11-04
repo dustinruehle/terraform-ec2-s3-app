@@ -68,10 +68,13 @@ echo "=== Setting up Temporal Order Management Worker ==="
 mkdir -p /opt/temporal-order-worker/certs
 cd /opt/temporal-order-worker
 
+# --- Hard-coded AWS Region ---
+AWS_REGION="us-east-1"
+echo "Using hard-coded AWS region: $AWS_REGION"
+
 # --- Fetch Temporal Cloud credentials from AWS Secrets Manager ---
 SECRET_NAME="temporal-cloud-credentials"
-AWS_REGION="$(curl -s http://169.254.169.254/latest/meta-data/placement/region)"
-
+echo "Fetching Temporal Cloud credentials from Secrets Manager..."
 aws secretsmanager get-secret-value \
   --secret-id "$SECRET_NAME" \
   --region "$AWS_REGION" \
@@ -87,7 +90,7 @@ echo "$CERT" | base64 -d > /opt/temporal-order-worker/certs/client.pem
 echo "$KEY" | base64 -d > /opt/temporal-order-worker/certs/client.key
 rm -f secret.json
 
-# --- Create environment variables file that matches setcloudenv.sh naming ---
+# --- Environment vars aligned with setcloudenv.sh ---
 cat > /opt/temporal-order-worker/worker.env <<EOF
 TEMPORAL_NAMESPACE=$NAMESPACE
 TEMPORAL_ADDRESS=$ADDRESS
