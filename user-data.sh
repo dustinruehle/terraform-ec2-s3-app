@@ -23,20 +23,55 @@ poetry --version
 curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
 yum install -y nodejs
 
-# ---- Simple Node.js web app ----
+# ---- Node.js web app that serves S3 content ----
 mkdir -p /opt/webapp
 cd /opt/webapp
-cat > server.js <<'EOFSERVER'
+cat > server.js <<EOFSERVER
 const http = require('http');
+const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
+
 const PORT = 80;
-http.createServer((req,res)=>{
-  res.writeHead(200, {'Content-Type':'text/plain'});
-  res.end('EC2 + Temporal Cloud Demo running\n');
-}).listen(PORT,()=>console.log('Server running on '+PORT));
+const BUCKET = '${bucket_name}';
+const REGION = '${aws_region}';
+
+const s3 = new S3Client({ region: REGION });
+
+async function getS3Content(key) {
+  const cmd = new GetObjectCommand({ Bucket: BUCKET, Key: key });
+  const resp = await s3.send(cmd);
+  return resp.Body.transformToString();
+}
+
+http.createServer(async (req, res) => {
+  try {
+    const message = await getS3Content('message.txt');
+    const config = JSON.parse(await getS3Content('config.json'));
+    const features = config.features.map(f => '<li>' + f + '</li>').join('');
+
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(
+      '<!DOCTYPE html><html><head><title>' + config.app_name + '</title>' +
+      '<style>' +
+      'body{font-family:sans-serif;max-width:800px;margin:50px auto;padding:20px}' +
+      '.message{background:#f0f0f0;padding:20px;border-radius:8px;margin:20px 0}' +
+      '.config{background:#e8f5e9;padding:20px;border-radius:8px}' +
+      'h1{color:#333}' +
+      '</style></head><body>' +
+      '<h1>' + config.app_name + '</h1>' +
+      '<p>Version: ' + config.version + '</p>' +
+      '<div class="message"><h2>Message from S3</h2><p>' + message + '</p></div>' +
+      '<div class="config"><h2>Features</h2><ul>' + features + '</ul></div>' +
+      '</body></html>'
+    );
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'text/plain' });
+    res.end('Error fetching S3 content: ' + err.message);
+  }
+}).listen(PORT, () => console.log('Server running on ' + PORT));
 EOFSERVER
 
 cat > package.json <<'EOFPACKAGE'
-{"name":"ec2-s3-webapp","version":"1.0.0","main":"server.js","scripts":{"start":"node server.js"}}
+{"name":"ec2-s3-webapp","version":"1.0.0","main":"server.js","dependencies":{"@aws-sdk/client-s3":"^3.0.0"},"scripts":{"start":"node server.js"}}
 EOFPACKAGE
 
 npm install
